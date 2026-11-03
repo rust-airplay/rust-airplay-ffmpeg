@@ -71,9 +71,9 @@ tools, and depends on `rust-airplay = "0.3.2"` for the renderer boundary.
   develop it is gone, and the manifest declares no binary.
 - Formatting follows Google's Rust style: `rustfmt.toml` sets the hundred-column width and
   the "Max" small-item heuristics, so a short call stays on one line.
-- The package metadata is what crates.io and docs.rs read: `include` names only the files
-  that ship -- sources, documents, tests and their fixtures -- and
-  `[package.metadata.docs.rs]` builds the documentation the way the site does.
+- The crate is open source on GitHub and nowhere else: `publish = false` keeps an
+  accidental `cargo publish` from putting it on crates.io, and the README depends on it
+  by git.
 
 ### Known limits
 

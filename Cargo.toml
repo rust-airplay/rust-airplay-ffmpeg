@@ -3,7 +3,6 @@ name = "rust-airplay-ffmpeg"
 description = "FFmpeg backend for the rust-airplay receiver: decodes the coded frames the library hands over with the ffmpeg command-line tools and plays them"
 repository = "https://github.com/rust-airplay/rust-airplay-ffmpeg"
 homepage = "https://github.com/rust-airplay/rust-airplay-ffmpeg"
-documentation = "https://docs.rs/rust-airplay-ffmpeg"
 readme = "README.md"
 keywords = ["airplay", "ffmpeg", "renderer", "video", "audio"]
 categories = ["multimedia"]
@@ -11,7 +10,9 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "GPL-3.0-or-later"
-publish = true
+# Open source on GitHub and nowhere else: this is what stops an accidental
+# `cargo publish` from putting the crate on crates.io.
+publish = false
 include = [
     "/src/**/*.rs",
     "/docs/**/*.md",
@@ -37,9 +38,6 @@ missing_docs = "deny"
 
 [lints.clippy]
 all = "warn"
-
-[package.metadata.docs.rs]
-rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # The core library: protocol, decryption and framing. This crate decodes and presents.

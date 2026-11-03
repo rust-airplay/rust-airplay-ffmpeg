@@ -34,7 +34,7 @@ HEVC, ALAC and AAC-ELD; the usual distribution and package-manager builds have a
 ```toml
 [dependencies]
 rust-airplay = "0.3"
-rust-airplay-ffmpeg = "0.1"
+rust-airplay-ffmpeg = { git = "https://github.com/rust-airplay/rust-airplay-ffmpeg" }
 ```
 
 ```rust,no_run

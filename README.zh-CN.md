@@ -28,7 +28,7 @@ trait，因此一个程序依赖核心库拿协议、依赖本 crate 拿播放�
 ```toml
 [dependencies]
 rust-airplay = "0.3"
-rust-airplay-ffmpeg = "0.1"
+rust-airplay-ffmpeg = { git = "https://github.com/rust-airplay/rust-airplay-ffmpeg" }
 ```
 
 ```rust,no_run
