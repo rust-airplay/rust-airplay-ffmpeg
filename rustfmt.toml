@@ -1,0 +1,8 @@
+# Google's Rust style: four-space indentation, a hundred columns, and the "Max" small-item
+# heuristics that keep a short call on one line instead of one argument per line.
+edition = "2024"
+max_width = 100
+use_small_heuristics = "Max"
+newline_style = "Unix"
+reorder_imports = true
+reorder_modules = true

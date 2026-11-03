@@ -1,0 +1,50 @@
+[package]
+name = "rust-airplay-ffmpeg"
+description = "FFmpeg backend for the rust-airplay receiver: decodes the coded frames the library hands over with the ffmpeg command-line tools and plays them"
+repository = "https://github.com/rust-airplay/rust-airplay-ffmpeg"
+homepage = "https://github.com/rust-airplay/rust-airplay-ffmpeg"
+documentation = "https://docs.rs/rust-airplay-ffmpeg"
+readme = "README.md"
+keywords = ["airplay", "ffmpeg", "renderer", "video", "audio"]
+categories = ["multimedia"]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+publish = true
+include = [
+    "/src/**/*.rs",
+    "/docs/**/*.md",
+    "/tests/**/*.rs",
+    "/tests/fixtures/**",
+    "/Cargo.toml",
+    "/README.md",
+    "/README.zh-CN.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]
+
+[lib]
+name = "rust_airplay_ffmpeg"
+path = "src/lib.rs"
+# A library and nothing else: this crate decodes and presents, and the program that runs
+# it is the program that owns the command line.
+doctest = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[lints.clippy]
+all = "warn"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+# The core library: protocol, decryption and framing. This crate decodes and presents.
+# 0.3.2 is the floor because it is the release this crate was written against: the
+# renderer boundary, the audio and video configurations and the volume curve are its.
+rust-airplay = "0.3.2"
+# Records, not printing: the program embedding this backend decides what a user sees.
+log = "0.4"

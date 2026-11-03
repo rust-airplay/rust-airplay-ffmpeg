@@ -1,0 +1,191 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Nothing here writes to the repository: read-only is the whole permission set the
+# workflows need.
+permissions:
+  contents: read
+
+# A second push to the same branch supersedes the first: the older run answers a
+# question nobody is asking any more.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  lint:
+    name: lint (fmt, clippy, MSRV, docs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # Nothing in this crate links a C library, so there is nothing to install to build
+      # it: that is the whole reason it starts programs instead of linking libav.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache the build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # `rust-version` in Cargo.toml is a promise to every dependent that has not moved to
+      # a newer toolchain; this is the only job that can break it, so it runs here.
+      - name: Check the minimum supported Rust version
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          cargo +1.85.0 check --all-targets
+
+      - name: Build the documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps
+
+      - name: Run the doctests
+        run: cargo test --doc
+
+  # The integration tests are `#[ignore]`d on purpose: they decode with `ffmpeg`, which a
+  # bare machine does not have. This job is the machine that has one, so it runs them
+  # instead of skipping them. They need no display and no sound card: their sinks write to
+  # files.
+  test-linux:
+    name: test (linux, FFmpeg)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the build
+        uses: Swatinem/rust-cache@v2
+
+      # If a distribution FFmpeg stops shipping a decoder, the tests below would fail
+      # rather than skip, but this step is what makes the failure say which one.
+      - name: Check the runtime the ignored tests need
+        run: |
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+          ffmpeg -hide_banner -decoders | grep -Eq ' h264 '
+          ffmpeg -hide_banner -decoders | grep -Eq ' hevc '
+          ffmpeg -hide_banner -decoders | grep -Eq ' alac '
+          ffmpeg -hide_banner -decoders | grep -Eq ' aac '
+
+      - name: Run the tests
+        run: cargo test --all-targets
+
+      # One at a time: these start real programs, and a runner has few cores.
+      - name: Run the ignored tests against the real FFmpeg
+        run: cargo test --all-targets -- --ignored --test-threads=1
+
+  test-windows:
+    name: test (windows, FFmpeg)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg (MSYS2 UCRT64)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-ffmpeg
+
+      # The tool binaries and the DLLs they load both live in <prefix>/bin.
+      - name: Put FFmpeg on PATH (Windows)
+        shell: pwsh
+        run: |
+          $msys2 = '${{ steps.msys2.outputs.msys2-location }}'
+          if (-not $msys2) { $msys2 = 'C:\msys64' }
+          $prefix = Join-Path $msys2 'ucrt64'
+          (Join-Path $prefix 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check FFmpeg is on PATH (Windows)
+        run: |
+          ffmpeg -version | Select-Object -First 1
+          ffprobe -version | Select-Object -First 1
+
+      - name: Run the tests
+        run: cargo test --all-targets
+
+      - name: Run the ignored tests against the real FFmpeg
+        run: cargo test --all-targets -- --ignored --test-threads=1
+
+  # The tests compile the fixtures in with `include_bytes!`, so a `.crate` that ships
+  # without them cannot even be tested by whoever downloads it. `include` in Cargo.toml
+  # decides what ships, and this job is what keeps that list honest.
+  package:
+    name: package (published crate contents)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Require the fixtures to be in the package
+        run: |
+          set -euo pipefail
+          cargo package --list --allow-dirty > "$RUNNER_TEMP/package-list.txt"
+          for fixture in tests/fixtures/mirror-first-audio.eld tests/fixtures/mirror-first-frames.h264; do
+            if ! grep -qx "$fixture" "$RUNNER_TEMP/package-list.txt"; then
+              echo "::error::$fixture is missing from the packaged crate"
+              exit 1
+            fi
+          done
+
+      - name: Build the package
+        run: cargo package --no-verify
+
+  # Supply chain: advisories against the resolved tree, the license allow list, and where
+  # every crate came from. `deny.toml` carries the policy.
+  deny:
+    name: cargo-deny (advisories, licenses, bans, sources)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Check the dependency tree
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
