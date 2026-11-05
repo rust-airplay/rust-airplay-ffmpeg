@@ -127,7 +127,15 @@ pub mod testing {
     ///
     /// Returns what the coding could not be named to FFmpeg with, as text.
     pub fn video_arguments(codec: VideoCodec, sink: &Program) -> Result<Vec<String>, String> {
-        video::arguments(codec, sink).map_err(|error| error.to_string())
+        video::arguments(codec, sink, None).map_err(|error| error.to_string())
+    }
+
+    /// The hardware acceleration a listing names, if any.
+    ///
+    /// The listing is what `ffmpeg -hwaccels` prints; this exposes the choice the
+    /// renderer makes so that a test can read it without starting a program.
+    pub fn video_hardware(listing: &str) -> Option<&'static str> {
+        video::hardware(listing).map(|hardware| hardware.accel)
     }
 
     /// Whether this machine can start a program.

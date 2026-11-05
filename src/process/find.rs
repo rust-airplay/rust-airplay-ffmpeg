@@ -27,3 +27,24 @@ pub(crate) fn probe(program: &str) -> Result<(), LaunchError> {
         Err(error) => Err(LaunchError::NotFound { tried: vec![format!("{program} ({error})")] }),
     }
 }
+
+/// What a program prints when a flag makes it list something.
+///
+/// `-hwaccels` is the question this exists for: the methods a build has are the only
+/// reason to ask for hardware decoding, because a build without one refuses the option
+/// rather than falling back to software.
+///
+/// Returns `None` when the program cannot be started or says nothing, which the caller
+/// reads as "no hardware acceleration" and does the same thing with as an empty list.
+pub(crate) fn listing(program: &str, arguments: &[&str]) -> Option<String> {
+    let output = Command::new(program)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}

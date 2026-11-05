@@ -11,6 +11,12 @@ tools, and depends on `rust-airplay = "0.3.2"` for the renderer boundary.
 
 ### Added
 
+- **Hardware decoding, opt-in**: `Options::with_hardware_decoding(true)` asks the decoder
+  which accelerators its build has, once, and adds `-hwaccel <name>` to every video
+  stream. Measured on 4K HEVC, 300 frames: 6.96 s of CPU software against 2.3-3.4 s
+  hardware, at 4-5x real time either way, so it buys CPU rather than latency. Only
+  `-hwaccel` is added, because `ffplay` rejects `-hwaccel_output_format` -- the
+  cheaper explicit download is documented for a sink that can take it.
 - **`FfmpegRenderer`**, which starts a decoder and a sink per stream and refuses a machine
   without the programs when it is built rather than when a frame arrives.
 - **An audio path that survives having no frame boundaries.** A raw AAC-ELD or ALAC frame

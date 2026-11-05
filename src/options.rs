@@ -163,6 +163,8 @@ pub struct Options {
     warm_video: bool,
     /// The coding a warm video sink is started for.
     warm_codec: rust_airplay::VideoCodec,
+    /// Whether video decoding is asked of the GPU.
+    hardware_decoding: bool,
 }
 
 impl Default for Options {
@@ -181,6 +183,7 @@ impl Default for Options {
             pacing: true,
             warm_video: false,
             warm_codec: rust_airplay::VideoCodec::H264,
+            hardware_decoding: false,
         }
     }
 }
@@ -199,6 +202,7 @@ impl Options {
             pacing: true,
             warm_video: false,
             warm_codec: rust_airplay::VideoCodec::H264,
+            hardware_decoding: false,
         }
     }
 
@@ -259,6 +263,37 @@ impl Options {
     #[must_use]
     pub const fn warm_codec(&self) -> rust_airplay::VideoCodec {
         self.warm_codec
+    }
+
+    /// Asks the GPU to decode the mirror instead of the CPU.
+    ///
+    /// The renderer asks the decoder which accelerators its build has, once, when it is
+    /// built, and then adds `-hwaccel <name>` to every video stream it opens. A build
+    /// without one, or a sink that reads the stream itself, gets nothing added and plays
+    /// exactly as it did.
+    ///
+    /// Measured on 4K HEVC, 300 frames, decode only: software decoding spends 6.96 s of
+    /// CPU time with 8.5x real time to spare; hardware decoding spends 2.3-3.4 s of CPU
+    /// and still runs at 4-5x real time. Wall time goes the other way (0.59 s against
+    /// 1.2-1.5 s), because the frame has to come back to memory for a display that is not
+    /// the decoder's. So this buys CPU, not latency: on a machine that already decodes 4K
+    /// in software it returns most of a core, and on one that cannot it is the difference
+    /// between a picture and a stutter.
+    ///
+    /// The download can be made explicit and cheaper -- `-hwaccel_output_format d3d11`
+    /// with `-vf hwdownload,format=nv12` measured 0.88 s against 1.20 s for the same 300
+    /// frames -- but `ffplay` rejects the first of those options, so a sink that can take
+    /// it has to be named by the caller; see `docs/PERFORMANCE.md`.
+    #[must_use]
+    pub const fn with_hardware_decoding(mut self, hardware: bool) -> Self {
+        self.hardware_decoding = hardware;
+        self
+    }
+
+    /// Whether hardware decoding was asked for.
+    #[must_use]
+    pub const fn hardware_decoding(&self) -> bool {
+        self.hardware_decoding
     }
 
     /// Turns pacing on or off.

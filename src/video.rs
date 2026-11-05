@@ -32,6 +32,32 @@ use crate::process::{self, Process, lock};
 /// Where a renderer keeps a video sink between sessions.
 pub(crate) type WarmSlot = Mutex<Option<WarmSink>>;
 
+/// An accelerator a build has.
+///
+/// Only `-hwaccel` is named: `ffplay` -- the default sink, and the program that decodes
+/// here -- refuses `-hwaccel_output_format` outright ("Option not found"), so the flags
+/// this backend adds have to be the ones every program in the family takes. The faster
+/// form, where the frame is downloaded back explicitly, is a matter for a sink of the
+/// caller's own; `docs/PERFORMANCE.md` carries both measurements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Hardware {
+    /// The name `-hwaccel` takes: `d3d11va`, `vaapi` or `videotoolbox`.
+    pub(crate) accel: &'static str,
+}
+
+/// The hardware acceleration a build says it has, in the order this backend prefers.
+///
+/// The listing is what `ffmpeg -hwaccels` prints. The order is not the listing's: a
+/// display that is not the decoder's needs the frame copied back, and these are the
+/// accelerators whose download is a single copy on the platforms that have them.
+pub(crate) fn hardware(listing: &str) -> Option<Hardware> {
+    const PREFERRED: [&str; 3] = ["d3d11va", "vaapi", "videotoolbox"];
+    PREFERRED
+        .into_iter()
+        .find(|accel| listing.lines().any(|line| line.trim() == *accel))
+        .map(|accel| Hardware { accel })
+}
+
 /// How long after a restart a second one is refused.
 ///
 /// A sink that dies as soon as it starts would otherwise be restarted for every frame; a
@@ -99,8 +125,9 @@ impl FfmpegVideo {
         codec: VideoCodec,
         sink: &Program,
         pacing: bool,
+        hardware: Option<Hardware>,
     ) -> Result<Self, RenderError> {
-        let arguments = arguments(codec, sink)?;
+        let arguments = arguments(codec, sink, hardware)?;
         log::debug!("video sink: {} {}", sink.name(), arguments.join(" "));
         log::info!("video    opening {} {}", sink.name(), arguments.join(" "));
         let process = Process::start(sink.name(), &arguments, sink.environment())
@@ -144,8 +171,9 @@ impl FfmpegVideo {
         codec: VideoCodec,
         sink: &Program,
         pacing: bool,
+        hardware: Option<Hardware>,
     ) -> Result<(Self, WarmSink), RenderError> {
-        let arguments = arguments(codec, sink)?;
+        let arguments = arguments(codec, sink, hardware)?;
         log::info!("video    keeping {} warm: {}", sink.name(), arguments.join(" "));
         let process = Process::start(sink.name(), &arguments, sink.environment())
             .map_err(process::as_render_error)?;
@@ -498,7 +526,11 @@ fn ntp_seconds(timestamp: u64) -> f64 {
 ///
 /// Returns [`RenderError::Unavailable`] for a coding this backend cannot name to
 /// FFmpeg.
-pub(crate) fn arguments(codec: VideoCodec, sink: &Program) -> Result<Vec<String>, RenderError> {
+pub(crate) fn arguments(
+    codec: VideoCodec,
+    sink: &Program,
+    hardware: Option<Hardware>,
+) -> Result<Vec<String>, RenderError> {
     // A sink that reads the stream itself is given it and nothing else: it has its own
     // option language, and an FFmpeg argument in front of a pipeline is not one of its
     // options.
@@ -543,6 +575,15 @@ pub(crate) fn arguments(codec: VideoCodec, sink: &Program) -> Result<Vec<String>
     .into_iter()
     .map(str::to_owned)
     .collect();
+    if let Some(hardware) = hardware {
+        // An input option: after `-i` it names nothing. The frame comes back to system
+        // memory by the decoder's own download, because what reads this is a player that
+        // presents through SDL and not a sink that can take a GPU surface.
+        let input =
+            arguments.iter().position(|argument| argument == "-i").unwrap_or(arguments.len());
+        arguments.splice(input..input, ["-hwaccel", hardware.accel].into_iter().map(str::to_owned));
+    }
+    // The sink's own arguments come last, so a caller can override any of the above.
     arguments.extend(sink.arguments().iter().cloned());
     Ok(arguments)
 }
@@ -563,7 +604,7 @@ fn demuxer(codec: VideoCodec) -> Result<&'static str, RenderError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Arrival, arguments, demuxer, ntp_seconds};
+    use super::{Arrival, Hardware, arguments, demuxer, ntp_seconds};
     use crate::options::Program;
     use rust_airplay::{VideoCodec, VideoFrame};
 
@@ -586,7 +627,7 @@ mod tests {
     #[test]
     fn a_sinks_arguments_follow_the_ones_that_describe_the_input() {
         let sink = Program::new("ffmpeg").arg("-f").arg("null").arg("-");
-        let arguments = arguments(VideoCodec::H264, &sink).expect("arguments");
+        let arguments = arguments(VideoCodec::H264, &sink, None).expect("arguments");
         assert_eq!(
             arguments,
             [
@@ -615,7 +656,7 @@ mod tests {
     #[test]
     fn the_sink_is_told_to_stamp_frames_when_they_arrive() {
         let sink = Program::new("ffplay").arg("-framedrop");
-        let arguments = arguments(VideoCodec::H264, &sink).expect("arguments");
+        let arguments = arguments(VideoCodec::H264, &sink, None).expect("arguments");
         let at = arguments
             .iter()
             .position(|argument| argument == "-use_wallclock_as_timestamps")
@@ -645,11 +686,43 @@ mod tests {
             "d3d11videosink",
             "sync=false",
         ]);
-        let arguments = arguments(VideoCodec::H264, &sink).expect("arguments");
+        let arguments = arguments(VideoCodec::H264, &sink, None).expect("arguments");
         assert_eq!(
             arguments,
             ["fdsrc", "!", "h264parse", "!", "avdec_h264", "!", "d3d11videosink", "sync=false"]
         );
+    }
+
+    #[test]
+    fn hardware_decoding_is_asked_for_before_the_input() {
+        // `-hwaccel` names how the input is opened, so after `-i` it would name nothing.
+        // Only that flag is added: `ffplay` rejects `-hwaccel_output_format`, and it is
+        // the program that decodes here.
+        let sink = Program::new("ffplay").arg("-framedrop");
+        let hardware = Hardware { accel: "d3d11va" };
+        let arguments = arguments(VideoCodec::H265, &sink, Some(hardware)).expect("arguments");
+        let at = |needle: &str| arguments.iter().position(|argument| argument == needle);
+        let input = at("-i").expect("an input");
+        let accel = at("-hwaccel").expect("the accelerator");
+        assert_eq!(arguments[accel + 1], "d3d11va");
+        assert!(accel < input, "the accelerator has to be an input option: {arguments:?}");
+        assert!(at("-hwaccel_output_format").is_none(), "{arguments:?}");
+        assert!(at("-vf").is_none(), "{arguments:?}");
+        // The sink's own arguments stay last, so a caller can still override any of this.
+        assert_eq!(arguments.last().map(String::as_str), Some("-framedrop"));
+    }
+
+    #[test]
+    fn a_listing_names_the_accelerator_this_backend_prefers_to_use() {
+        use super::hardware;
+        // What `ffmpeg -hwaccels` prints, in the build's own order.
+        let listing = "Hardware acceleration methods:\ncuda\nvaapi\ndxva2\nqsv\nd3d11va\nvulkan\n";
+        let chosen = hardware(listing).expect("an accelerator");
+        assert_eq!(chosen.accel, "d3d11va");
+        assert_eq!(hardware("Hardware acceleration methods:\n").map(|h| h.accel), None);
+        assert_eq!(hardware("").map(|h| h.accel), None);
+        // A method the platform cannot download from is not a choice this backend makes.
+        assert_eq!(hardware("cuda\nvulkan\n").map(|h| h.accel), None);
     }
 
     #[test]

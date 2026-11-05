@@ -86,6 +86,7 @@ like `FfmpegRenderer::new`:
 | `.with_warm_video(true)` | start the video sink with the renderer and keep it between sessions | off |
 | `.with_warm_codec(codec)` | the coding a warm sink is started for | H.264 |
 | `.with_env(name, value)` | a variable the sink program is started with | none |
+| `.with_hardware_decoding(true)` | decode video on the GPU (`-hwaccel d3d11va`, `vaapi` or `videotoolbox`, whichever the build has) | off |
 | `.with_pacing(bool)` / `.without_pacing()` | honour a spacing asked for through `set_pace` | on |
 
 A sink is a program and the arguments that follow the ones describing its input. The backend

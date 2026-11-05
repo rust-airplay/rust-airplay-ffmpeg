@@ -29,7 +29,8 @@ stamps, which is the configuration this backend ships.
 | Input probing | FFmpeg default 3401 ms to start; 64 KiB cap 259 ms | `-probesize 65536 -analyzeduration 0` |
 | Decoder threads | default 168 fps, `-threads 8` 154 fps at 4K HEVC | default |
 | `-vf scale` to the window | 155-177 fps against 160-180 default | none: within noise, and a forced scale distorts a non-16:9 phone frame |
-| `-hwaccel d3d11va` | 108 fps against 185 for H.264; 50 against 80 for HEVC (the frame is downloaded back for SDL) | none |
+| Hardware decode, `-hwaccel d3d11va`, 4K HEVC 300 frames, decode only | 6.96 s of CPU and 0.59 s of wall software; 2.3-3.4 s of CPU and 1.2-1.5 s of wall hardware -- 4-5x real time either way | opt-in: `Options::with_hardware_decoding(true)` |
+| Hardware decode with an explicit download, `-hwaccel_output_format d3d11 -vf hwdownload,format=nv12` | 1.92 s of CPU and 0.88 s of wall, the fastest hardware path measured | not addable for `ffplay`: it rejects `-hwaccel_output_format` ("Option not found"), so this is a sink of the caller's own |
 | Wallclock stamps | `-use_wallclock_as_timestamps 1` equals the GStreamer sink's `sync=false`: a frame is shown when it arrives | used |
 | Warm video sink | cold, a 4K 60 fps session dropped **79 frames** at the start and the HEVC decoder then had no reference to decode with (`Could not find ref with POC`), which is a frozen picture; warm, the same session drops none, because the receiver's queue is eight frames deep and a cold player needs about 500 ms to fill it | on by default |
 

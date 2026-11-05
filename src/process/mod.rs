@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub(crate) use error::{LaunchError, as_render_error};
-pub(crate) use find::probe;
+pub(crate) use find::{listing, probe};
 use report::Report;
 use writer::Writer;
 

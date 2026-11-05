@@ -10,8 +10,8 @@ use rust_airplay::{
 
 use crate::audio::FfmpegAudio;
 use crate::options::{Options, Program};
-use crate::process::{as_render_error, lock, probe};
-use crate::video::{FfmpegVideo, WarmSink, WarmSlot};
+use crate::process::{as_render_error, listing, lock, probe};
+use crate::video::{FfmpegVideo, Hardware, WarmSink, WarmSlot};
 
 /// A renderer that plays through the FFmpeg command-line tools.
 ///
@@ -49,6 +49,11 @@ pub struct FfmpegRenderer {
     gain: Arc<AtomicU32>,
     /// The video sink kept running between sessions, when warm video is on.
     warm: WarmSlot,
+    /// The accelerator this machine's sink offers, when hardware decoding was asked for.
+    ///
+    /// Decided once, at construction, because the answer cannot change while the process
+    /// runs and every stream has to be started with the same one.
+    hardware: Option<Hardware>,
 }
 
 impl FfmpegRenderer {
@@ -80,10 +85,33 @@ impl FfmpegRenderer {
             options.audio_sink(),
             options.video_sink()
         );
+        // Asked of the sink rather than assumed from the platform: a build can be missing
+        // the accelerator its operating system usually has, and then `-hwaccel` would be an
+        // option the player refuses instead of one it ignores.
+        let hardware = if options.hardware_decoding() {
+            // Asked of the decoder, which lists them: `ffplay -hwaccels` prints its
+            // version banner instead, so a probe of the sink would always find nothing.
+            let found = listing(options.decoder(), &["-hwaccels"])
+                .as_deref()
+                .and_then(crate::video::hardware);
+            match found {
+                Some(hardware) => {
+                    log::info!("video    decoding on the GPU: -hwaccel {}", hardware.accel)
+                }
+                None => log::warn!(
+                    "video    hardware decoding was asked for, but {} offers no accelerator",
+                    options.video_sink().name()
+                ),
+            }
+            found
+        } else {
+            None
+        };
         let renderer = Self {
             options,
             gain: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             warm: std::sync::Mutex::new(None),
+            hardware,
         };
         if renderer.options.warm_video() {
             // Started now rather than at the first frame: this is what "warm" means, and
@@ -93,6 +121,7 @@ impl FfmpegRenderer {
                 renderer.options.warm_codec(),
                 renderer.options.video_sink(),
                 renderer.options.pacing(),
+                renderer.hardware,
             )?;
             drop(stream);
             *lock(&renderer.warm) = Some(warm);
@@ -151,8 +180,12 @@ impl Renderer for FfmpegRenderer {
 
     fn open_video(&self, config: VideoConfig) -> Result<Box<dyn VideoStream>, RenderError> {
         if !self.options.warm_video() {
-            let stream =
-                FfmpegVideo::open(config.codec, self.options.video_sink(), self.options.pacing())?;
+            let stream = FfmpegVideo::open(
+                config.codec,
+                self.options.video_sink(),
+                self.options.pacing(),
+                self.hardware,
+            )?;
             return Ok(Box::new(stream));
         }
         let slot = lock(&self.warm);
@@ -170,8 +203,12 @@ impl Renderer for FfmpegRenderer {
             }
         }
         drop(slot);
-        let (stream, warm) =
-            FfmpegVideo::warm(config.codec, self.options.video_sink(), self.options.pacing())?;
+        let (stream, warm) = FfmpegVideo::warm(
+            config.codec,
+            self.options.video_sink(),
+            self.options.pacing(),
+            self.hardware,
+        )?;
         *lock(&self.warm) = Some(warm);
         Ok(Box::new(stream))
     }
